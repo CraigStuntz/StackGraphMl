@@ -1,0 +1,4 @@
+_Resharper.StackGraphML/*
+*.suo
+StackGraphMl/bin/*
+StackGraphMl/obj/*
