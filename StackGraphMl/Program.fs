@@ -56,7 +56,7 @@ let readAllRows (reader : XmlReader) =
     // Files are huge; let's take just a few sample records for debugging
     if System.Diagnostics.Debugger.IsAttached then    
         seq { 
-            for i in 1..1000 do 
+            for i in 1..100 do 
                 reader.ReadStartElement("row")
                 yield reader
         }
@@ -85,10 +85,9 @@ let importUsers(writer: User -> unit) =
     let users = 
         logIteration(readAllRows reader) 
         |> Seq.choose(fun reader -> readUser(reader))
-    users |> Seq.iter(fun user -> writer(user))
-    let result = users |> Seq.map(fun user -> user.UserId) |> Set.ofSeq
-    printfn "Read %d users" result.Count
-    result
+        |> List.ofSeq
+    users |> List.iter(fun user -> writer(user))
+    printfn "Read %d users" (List.length(users))
 
 let writePost (writer: XmlWriter) (userId: int, answerUserId: int, score: int) = 
     writer.WriteStartElement("edge")
@@ -101,7 +100,7 @@ let writePost (writer: XmlWriter) (userId: int, answerUserId: int, score: int) =
         writer.WriteEndElement()
     writer.WriteEndElement()    
 
-let importPosts (writer: XmlWriter, userIds: Set<int>) = 
+let importPosts (writer: XmlWriter) = 
     use inFile = new FileStream(Path.Combine(folder, "posts.xml"), FileMode.Open, FileAccess.Read)
     use reader = XmlReader.Create(inFile)
     reader.MoveToElement() |> ignore
@@ -161,10 +160,10 @@ let writeGraphML () =
     writer.WriteAttributeString("edgedefault", "directed")
     // Nodes
     printfn "Reading users.xml"
-    let userIds = importUsers(writeUser(writer))
+    importUsers(writeUser(writer))
     // Edges
     printfn "Reading posts.xml"
-    importPosts(writer, userIds)
+    importPosts(writer)
     // Finish document
     writer.WriteEndElement()
     writer.WriteEndElement()
