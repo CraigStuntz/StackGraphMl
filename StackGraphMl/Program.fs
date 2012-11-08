@@ -4,6 +4,7 @@ open System.Data.Linq
 open System.IO
 open System.Linq
 open System.Xml
+open System.Xml.Schema
 open Microsoft.FSharp.Data.TypeProviders
 open Microsoft.FSharp.Linq
 
@@ -12,6 +13,7 @@ let folder = @"E:\StackExchangeDump";
 
 type Answer = { Id: int; UserId: int; Score: int; ParentId: int }
 type Question = { Id: int; UserId: int; Score: int; Answers: Answer list }
+type User = { UserId: int }
 
 let parseInt = System.Int32.TryParse >> function
     | true, v -> v
@@ -43,14 +45,32 @@ let logIteration (seq, itemName) =
 
 let readAllRows (reader : XmlReader) = 
     seq { 
-        while reader.IsStartElement("row") do
+        // while reader.IsStartElement("row") do
+        for i in 1..100 do 
             reader.ReadStartElement("row")
             yield reader 
     }
 
+let writeGraphML (users: User seq) = 
+    use outFile = new FileStream(Path.Combine(folder, "StackOverflow.gml"), FileMode.Create, FileAccess.Write)
+    let settings = new XmlWriterSettings()
+    settings.Indent <- true 
+    use writer = XmlWriter.Create(outFile, settings)
+    writer.WriteStartElement("graphml", "http://graphml.graphdrawing.org/xmlns")
+    writer.WriteAttributeString("xmlns", "xsi", null, XmlSchema.InstanceNamespace)
+    writer.WriteAttributeString("xsi", "schemaLocation", null, "http://graphml.graphdrawing.org/xmlns http://graphml.graphdrawing.org/xmlns/1.0/graphml.xsd")
+    writer.WriteStartElement("graph")
+    writer.WriteAttributeString("id", "G")
+    writer.WriteAttributeString("edgedefault", "directed")
+    users |> Seq.iter(fun u -> writer.WriteStartElement("node"); writer.WriteAttributeString("id", u.UserId.ToString()); writer.WriteEndElement())
+    writer.WriteEndElement()
+    writer.WriteEndElement()
+    writer.Flush()
+    writer.Close()
+
 let importStackData () = 
-    use file = new FileStream(Path.Combine(folder, "posts.xml"), FileMode.Open, FileAccess.Read)
-    use reader = XmlReader.Create(file)
+    use inFile = new FileStream(Path.Combine(folder, "posts.xml"), FileMode.Open, FileAccess.Read)
+    use reader = XmlReader.Create(inFile)
     reader.MoveToElement() |> ignore
     reader.ReadStartElement("posts")
     let z: Question list * Answer list = (List.empty, List.Empty)
@@ -65,6 +85,8 @@ let main argv =
     printfn "Started import at %A." System.DateTime.Now
     printfn "Reading posts.xml"
     importStackData()  |> ignore
-    printfn "Started import at %A." System.DateTime.Now
+    printfn "Writing GraphML"
+    writeGraphML(seq { for uid in 1..10 -> { UserId = uid } })
+    printfn "Finished import at %A." System.DateTime.Now
     Console.ReadLine() |> ignore
     0
