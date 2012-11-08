@@ -15,11 +15,11 @@ let parseInt = System.Int32.TryParse >> function
     | false, _ -> 0
  
 type Answer   = { Id: int; UserId: int; Score: int; ParentId: int }
-type Question = { Id: int; UserId: int; Score: int; Answers: Answer list }
+type Question = { Id: int; UserId: int; Score: int }
 type User     = { UserId: int; Reputation: int }
 
 let readQuestion (reader: XmlReader) = 
-    { Id = parseInt(reader.["Id"]); UserId = parseInt(reader.["OwnerUserId"]); Score = parseInt(reader.["Score"]); Answers = List.empty }
+    { Id = parseInt(reader.["Id"]); UserId = parseInt(reader.["OwnerUserId"]); Score = parseInt(reader.["Score"]) }
 
 let readAnswer (reader: XmlReader) : Answer = 
     { Id = parseInt(reader.["Id"]); UserId = parseInt(reader.["OwnerUserId"]); Score = parseInt(reader.["Score"]); ParentId = parseInt(reader.["ParentId"]) }
