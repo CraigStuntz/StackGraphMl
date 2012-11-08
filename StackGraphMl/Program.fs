@@ -32,16 +32,19 @@ let readRow (reader: XmlReader) (qs: Question list, anss: Answer list) =
     else
         (qs, anss) // ignore the row if unreadable
 
+let log(i, itemName) = 
+    if (i % 100000 = 0) then 
+        printf "."
+    if (i % 1000000 = 0) then 
+        printfn "Read %d %s" i itemName
+
+let logIteration (seq, itemName) =
+    seq |> Seq.mapi(fun i x -> log(i + 1, itemName); x)
+
 let readAllRows (reader : XmlReader) = 
-    let i = ref 0
     seq { 
         while reader.IsStartElement("row") do
             reader.ReadStartElement("row")
-            i := !i + 1
-            if (!i % 100000 = 0) then 
-                printf "."
-            if (!i % 1000000 = 0) then 
-                printfn "Read %d posts" !i
             yield reader 
     }
 
@@ -51,7 +54,7 @@ let importStackData () =
     reader.MoveToElement() |> ignore
     reader.ReadStartElement("posts")
     let z: Question list * Answer list = (List.empty, List.Empty)
-    let (qs, anss) = readAllRows(reader) |> Seq.fold(fun accum elem -> readRow elem accum) z 
+    let (qs, anss) = logIteration(readAllRows(reader), "posts") |> Seq.fold(fun accum elem -> readRow elem accum) z 
     let la = List.length(anss)
     let lq = List.length(anss)
     printfn "Read %d questions and %d answers" lq la
@@ -60,6 +63,7 @@ let importStackData () =
 [<EntryPoint>]
 let main argv = 
     printfn "Started import at %A." System.DateTime.Now
+    printfn "Reading posts.xml"
     importStackData()  |> ignore
     printfn "Started import at %A." System.DateTime.Now
     Console.ReadLine() |> ignore
