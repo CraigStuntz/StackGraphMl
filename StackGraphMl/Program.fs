@@ -14,15 +14,15 @@ let parseInt = System.Int32.TryParse >> function
     | true, v -> v
     | false, _ -> 0
  
-type Answer = { Id: int; UserId: int; Score: int; ParentId: int }
+type Answer   = { Id: int; UserId: int; Score: int; ParentId: int }
 type Question = { Id: int; UserId: int; Score: int; Answers: Answer list }
-type User = { UserId: int; Reputation: int }
+type User     = { UserId: int; Reputation: int }
 
 let readQuestion (reader: XmlReader) = 
-    { Id = parseInt(reader.["Id"]); UserId = parseInt(reader.["UserId"]); Score = parseInt(reader.["Score"]); Answers = List.empty }
+    { Id = parseInt(reader.["Id"]); UserId = parseInt(reader.["OwnerUserId"]); Score = parseInt(reader.["Score"]); Answers = List.empty }
 
 let readAnswer (reader: XmlReader) : Answer = 
-    { Id = parseInt(reader.["Id"]); UserId = parseInt(reader.["UserId"]); Score = parseInt(reader.["Score"]); ParentId = parseInt(reader.["ParentId"]) }
+    { Id = parseInt(reader.["Id"]); UserId = parseInt(reader.["OwnerUserId"]); Score = parseInt(reader.["Score"]); ParentId = parseInt(reader.["ParentId"]) }
 
 let readUser (reader: XmlReader) : User option = 
     if reader.Read() then
@@ -32,27 +32,31 @@ let readUser (reader: XmlReader) : User option =
 
 let readPostRow (reader: XmlReader) (qs: Question list, anss: Answer list) = 
     if reader.Read() then
-        match reader.["PostTypeId"] with
-            | "1" -> ( readQuestion reader :: qs, anss)
-            | "2" -> (qs, readAnswer reader :: anss )
-            | unk -> printfn "Unexpected PostTypeId %s" unk; (qs, anss )
+        if (parseInt(reader.["Score"]) >= 0) && (System.String.IsNullOrEmpty(reader.["ClosedDate"]) )then
+            match reader.["PostTypeId"] with
+                | "1" -> ( readQuestion reader :: qs, anss)
+                | "2" -> (qs, readAnswer reader :: anss )
+                | unk -> (qs, anss) // Ignore wikis, election stuff, etc.
+        else
+            (qs, anss) // exclude severely down-voted or closed posts
     else
-        (qs, anss) // ignore the row if unreadable
+        printfn "Found bad post. Ignoring"
+        (qs, anss)
 
-let log(i, itemName) = 
+let log i = 
     if (i % 100000 = 0) then 
         printf "."
     if (i % 1000000 = 0) then 
-        printfn "Read %d %s" i itemName
+        printfn "%d" i
 
-let logIteration (seq, itemName) =
-    seq |> Seq.mapi(fun i x -> log(i + 1, itemName); x)
+let logIteration (seq) =
+    seq |> Seq.mapi(fun i x -> log(i + 1); x)
 
 let readAllRows (reader : XmlReader) = 
     // Files are huge; let's take just a few sample records for debugging
     if System.Diagnostics.Debugger.IsAttached then    
         seq { 
-            for i in 1..100 do 
+            for i in 1..1000 do 
                 reader.ReadStartElement("row")
                 yield reader
         }
@@ -64,38 +68,68 @@ let readAllRows (reader : XmlReader) =
         }
 
 let writeUser (writer: XmlWriter) user =
-    match user with 
-        | Some u -> 
-            writer.WriteStartElement("node")
-            writer.WriteAttributeString("id", u.UserId.ToString())
-            if u.Reputation <> 0 then // 0 is default value; saves space in file to not write is out since huge number of users with rep = 0
-                writer.WriteStartElement("data")
-                writer.WriteAttributeString("key", "rep")
-                writer.WriteValue(u.Reputation)
-                writer.WriteEndElement()
-            writer.WriteEndElement()
-        | None -> printfn "Bad user record found. Ignoring."
+    writer.WriteStartElement("node")
+    writer.WriteAttributeString("id", user.UserId.ToString())
+    if user.Reputation <> 0 then // 0 is default value; saves space in file to not write is out since huge number of users with rep = 0
+        writer.WriteStartElement("data")
+        writer.WriteAttributeString("key", "r")
+        writer.WriteValue(user.Reputation)
+        writer.WriteEndElement()
+    writer.WriteEndElement()
 
-let importUsers(writer: User option -> unit) = 
+let importUsers(writer: User -> unit) = 
     use inFile = new FileStream(Path.Combine(folder, "users.xml"), FileMode.Open, FileAccess.Read)
     use reader = XmlReader.Create(inFile)
     reader.MoveToElement() |> ignore
     reader.ReadStartElement("users")
-    logIteration(readAllRows reader, "users") |> Seq.iter(fun reader -> readUser(reader) |> writer)
+    let users = 
+        logIteration(readAllRows reader) 
+        |> Seq.choose(fun reader -> readUser(reader))
+    users |> Seq.iter(fun user -> writer(user))
+    let result = users |> Seq.map(fun user -> user.UserId) |> Set.ofSeq
+    printfn "Read %d users" result.Count
+    result
 
-let importPosts () = 
+let writePost (writer: XmlWriter) (userId: int, answerUserId: int, score: int) = 
+    writer.WriteStartElement("edge")
+    writer.WriteAttributeString("source", userId.ToString())
+    writer.WriteAttributeString("target", answerUserId.ToString())
+    if score > 0 then
+        writer.WriteStartElement("data")
+        writer.WriteAttributeString("key", "w")
+        writer.WriteValue(score)
+        writer.WriteEndElement()
+    writer.WriteEndElement()    
+
+let importPosts (writer: XmlWriter, userIds: Set<int>) = 
     use inFile = new FileStream(Path.Combine(folder, "posts.xml"), FileMode.Open, FileAccess.Read)
     use reader = XmlReader.Create(inFile)
     reader.MoveToElement() |> ignore
     reader.ReadStartElement("posts")
     let z: Question list * Answer list = (List.empty, List.Empty)
-    let (qs, anss) = logIteration(readAllRows reader, "posts") |> Seq.fold(fun accum elem -> readPostRow elem accum) z 
+    let (qs, anss) = logIteration(readAllRows reader) |> Seq.fold(fun accum elem -> readPostRow elem accum) z 
     let la = List.length(anss)
     let lq = List.length(qs)
-    printfn "Read %d questions and %d answers" lq la
+    printfn "Read %d questions and %d answers. Calcluating edges. Grouping answers." lq la
+    let answersByParentId = 
+        Seq.ofList(anss) 
+        |> Seq.groupBy(fun a -> a.ParentId) 
+        |> Map.ofSeq
+    printfn "Matching users."
+    let edgesFor question = 
+        match answersByParentId.TryFind(question.Id) with
+            | Some answers -> 
+                answers 
+                |> Seq.map(fun answer -> (question.UserId, answer.UserId, question.Score + answer.Score)) 
+            | _ -> Seq.empty
+    let questionUserIdWithAnswerUserIds = Async.Parallel [ for q in qs -> async { return edgesFor(q) } ] |> Async.RunSynchronously 
+    printfn "Writing edges."
+    let edges = questionUserIdWithAnswerUserIds |> Seq.collect(fun edges -> edges) 
+    edges |> Seq.iter(writePost(writer))
+    printfn "Wrote %d edges." (edges.Count())
 
 let writeGraphML () = 
-    use outFile = new FileStream(Path.Combine(folder, "StackOverflow.gml"), FileMode.Create, FileAccess.Write)
+    use outFile = new FileStream(Path.Combine(folder, "StackOverflow.graphml"), FileMode.Create, FileAccess.Write)
     let settings = new XmlWriterSettings()
     if System.Diagnostics.Debugger.IsAttached then
         settings.Indent <- true 
@@ -105,10 +139,19 @@ let writeGraphML () =
     writer.WriteAttributeString("xmlns", "xsi", null, XmlSchema.InstanceNamespace)
     writer.WriteAttributeString("xsi", "schemaLocation", null, "http://graphml.graphdrawing.org/xmlns http://graphml.graphdrawing.org/xmlns/1.0/graphml.xsd")
     // Custom GraphML-Attributes
+    // reputation
     writer.WriteStartElement("key")
-    writer.WriteAttributeString("id", "rep")
+    writer.WriteAttributeString("id", "r")
     writer.WriteAttributeString("for", "node")
     writer.WriteAttributeString("attr.name", "reputation")
+    writer.WriteAttributeString("attr.type", "int")
+    writer.WriteElementString("default", "0")
+    writer.WriteEndElement()
+    // edge weight
+    writer.WriteStartElement("key")
+    writer.WriteAttributeString("id", "w")
+    writer.WriteAttributeString("for", "edge")
+    writer.WriteAttributeString("attr.name", "weight")
     writer.WriteAttributeString("attr.type", "int")
     writer.WriteElementString("default", "0")
     writer.WriteEndElement()
@@ -118,10 +161,10 @@ let writeGraphML () =
     writer.WriteAttributeString("edgedefault", "directed")
     // Nodes
     printfn "Reading users.xml"
-    importUsers(writeUser(writer))
+    let userIds = importUsers(writeUser(writer))
     // Edges
     printfn "Reading posts.xml"
-    importPosts()
+    importPosts(writer, userIds)
     // Finish document
     writer.WriteEndElement()
     writer.WriteEndElement()
@@ -133,5 +176,6 @@ let main argv =
     printfn "Started import at %A." System.DateTime.Now
     writeGraphML()
     printfn "Finished import at %A." System.DateTime.Now
-    Console.ReadLine() |> ignore
+    if System.Diagnostics.Debugger.IsAttached then
+        Console.ReadLine() |> ignore
     0
