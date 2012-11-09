@@ -8,7 +8,7 @@ open System.Xml.Schema
 open Microsoft.FSharp.Data.TypeProviders
 open Microsoft.FSharp.Linq
 
-let folder = @"E:\StackExchangeDump";
+let folder = @"C:\Users\craig\Documents\Visual Studio 2012\Projects\StackGraphMl\StackGraphML\" // @"E:\StackExchangeDump";
 
 let parseInt = System.Int32.TryParse >> function
     | true, v -> v
@@ -56,7 +56,7 @@ let readAllRows (reader : XmlReader) =
     // Files are huge; let's take just a few sample records for debugging
     if System.Diagnostics.Debugger.IsAttached then    
         seq { 
-            for i in 1..100 do 
+            for i in 1..8 do 
                 reader.ReadStartElement("row")
                 yield reader
         }
