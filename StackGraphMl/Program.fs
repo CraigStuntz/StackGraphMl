@@ -8,7 +8,9 @@ open System.Xml.Schema
 open Microsoft.FSharp.Data.TypeProviders
 open Microsoft.FSharp.Linq
 
-let folder = @"C:\Users\craig\Documents\Visual Studio 2012\Projects\StackGraphMl\StackGraphML\" // @"E:\StackExchangeDump";
+// You need to change this line to point at the folder where you downloaded your Stack Overflow data
+// The output file will go there, too.
+let folder = @"E:\StackExchangeDump";
 
 let parseInt = System.Int32.TryParse >> function
     | true, v -> v
@@ -57,8 +59,9 @@ let readAllRows (reader : XmlReader) =
     if System.Diagnostics.Debugger.IsAttached then    
         seq { 
             for i in 1..8 do 
-                reader.ReadStartElement("row")
-                yield reader
+                if reader.IsStartElement("row") then
+                    reader.ReadStartElement("row")
+                    yield reader
         }
     else 
         seq {
@@ -98,7 +101,11 @@ let writePost (writer: XmlWriter) (userId: int, answerUserId: int, score: int) =
         writer.WriteAttributeString("key", "w")
         writer.WriteValue(score)
         writer.WriteEndElement()
-    writer.WriteEndElement()    
+    writer.WriteEndElement()
+
+// Is this right? A terrible answer to a great question does well. 
+let edgeWeight questionScore answerScore = 
+    questionScore + answerScore
 
 let importPosts (writer: XmlWriter) = 
     use inFile = new FileStream(Path.Combine(folder, "posts.xml"), FileMode.Open, FileAccess.Read)
@@ -119,7 +126,7 @@ let importPosts (writer: XmlWriter) =
         match answersByParentId.TryFind(question.Id) with
             | Some answers -> 
                 answers 
-                |> Seq.map(fun answer -> (question.UserId, answer.UserId, question.Score + answer.Score)) 
+                |> Seq.map(fun answer -> (question.UserId, answer.UserId, edgeWeight question.Score answer.Score)) 
             | _ -> Seq.empty
     let questionUserIdWithAnswerUserIds = Async.Parallel [ for q in qs -> async { return edgesFor(q) } ] |> Async.RunSynchronously 
     printfn "Writing edges."
